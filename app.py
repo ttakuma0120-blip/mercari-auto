@@ -26,8 +26,10 @@ from mercari_listing_generator import (
 )
 from google import genai
 
-# .env を読み込み
+# .env を読み込み（ローカル用）。Streamlit Cloud では st.secrets から補完する
 load_env_file()
+if not os.getenv("GEMINI_API_KEY") and "GEMINI_API_KEY" in st.secrets:
+    os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 
 st.set_page_config(
     page_title="メルカリ商品紹介文生成",
