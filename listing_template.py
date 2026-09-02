@@ -34,6 +34,23 @@ LISTING_BODY_TEMPLATE = """【ポイント】
 # メルカリ説明文の目標上限（AIプロンプトと一致させる）
 MAX_LISTING_CHARS = 1000
 
+# 種類ごとの採寸項目（【サイズ】ブロックの手動入力用）
+SIZE_FIELD_SETS: dict[str, list[str]] = {
+    "トップス（Tシャツ・シャツなど）": ["肩幅", "身幅", "袖丈", "着丈"],
+    "ズボン": ["ウエスト", "ヒップ", "股上", "股下", "わたり幅", "裾幅"],
+    "スカート": ["ウエスト", "ヒップ", "総丈", "裾幅"],
+}
+
+
+def build_size_block(category_key: str, measurements: dict[str, str]) -> str:
+    """採寸フォームの入力値から【サイズ】ブロックの本文を組み立てる（未入力の項目はラベルのみ）"""
+    fields = SIZE_FIELD_SETS.get(category_key, [])
+    lines = []
+    for label in fields:
+        value = (measurements.get(label) or "").strip()
+        lines.append(f"{label} {value}cm" if value else f"{label}：")
+    return "\n".join(lines)
+
 _STYLING_HEAD = "\n\n【着こなし・おすすめコーデ】\n"
 
 

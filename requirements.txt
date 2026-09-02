@@ -1,3 +1,6 @@
 # メルカリ商品紹介文生成ツール - 依存パッケージ
 google-genai>=1.0.0
 streamlit>=1.28.0
+
+# 写真自動監視→メルカリ出品フォーム自動入力（photo_watcher.py）用
+playwright>=1.40.0

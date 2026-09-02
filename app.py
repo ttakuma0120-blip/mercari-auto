@@ -5,7 +5,12 @@
 """
 
 import base64
+import json
 import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -16,6 +21,7 @@ from history_store import (
     delete_entry,
     load_history,
 )
+from listing_template import SIZE_FIELD_SETS, build_listing_description, build_size_block
 from mercari_listing_generator import (
     enrich_with_full_description,
     generate_listing,
@@ -36,6 +42,23 @@ st.set_page_config(
     page_icon="📦",
     layout="wide",
 )
+
+# アプリ内パスワードゲート（ブラウザのHTTP Basic認証はスマホ端末によって
+# ポップアップが出ないことがあるため、こちらを正としてアクセス制限する）。
+# ログイン状態はURLのクエリパラメータで持たせる
+# （session_stateだけだとページの完全リロードで消えてしまうため）。
+_app_password = os.getenv("APP_ACCESS_PASSWORD")
+if _app_password:
+    if st.query_params.get("key") != _app_password:
+        st.title("🔒 ログイン")
+        pw = st.text_input("パスワード", type="password", key="app_login_pw")
+        if st.button("入る", type="primary"):
+            if pw == _app_password:
+                st.query_params["key"] = pw
+                st.rerun()
+            else:
+                st.error("パスワードが違います。")
+        st.stop()
 
 # 生成結果を再実行後も保持（ダウンロード等で消えない）
 if "current_listing" not in st.session_state:
@@ -82,6 +105,33 @@ def clipboard_copy_button(label: str, text: str, dom_key: str) -> None:
         </div>
         """,
         height=52,
+    )
+
+
+def _launch_mercari_autofill(uploaded_files, listing_data: dict) -> None:
+    """
+    現在の出品データをメルカリの出品フォームに自動入力する。
+    Playwright(同期API)はStreamlitのイベントループと競合するため、別プロセスで実行する。
+    """
+    tmp_dir = Path(tempfile.mkdtemp(prefix="mercari_fill_"))
+    image_paths = []
+    for f in uploaded_files:
+        f.seek(0)
+        img_path = tmp_dir / f.name
+        img_path.write_bytes(f.read())
+        image_paths.append(str(img_path))
+        f.seek(0)
+
+    payload_path = tmp_dir / "payload.json"
+    payload_path.write_text(
+        json.dumps({"image_paths": image_paths, "data": listing_data}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    script_path = Path(__file__).parent / "mercari_fill_cli.py"
+    subprocess.Popen(
+        [sys.executable, str(script_path), str(payload_path)],
+        cwd=str(Path(__file__).parent),
     )
 
 
@@ -223,9 +273,8 @@ uc1, uc2 = st.columns([4, 1])
 with uc1:
     uploaded_files = st.file_uploader(
         "商品の写真をアップロード（複数可）",
-        type=["jpg", "jpeg", "png", "webp", "gif"],
         accept_multiple_files=True,
-        help="表・裏・タグなど複数枚あると精度が上がります",
+        help="表・裏・タグなど複数枚あると精度が上がります（JPG/PNG/WEBP/GIF対応）",
         key=_upload_key,
     )
 with uc2:
@@ -246,6 +295,31 @@ if uploaded_files:
             st.image(f, caption=f.name, use_container_width=True)
         f.seek(0)  # 読み込み位置をリセット
 
+# 採寸入力（生成前に分かっている数値を入れておくと、そのまま説明文に使われる）
+st.subheader("📏 採寸（分かっていれば先に入力しておくと、そのまま説明文に使われます）")
+size_category = st.selectbox(
+    "種類", options=list(SIZE_FIELD_SETS.keys()), key="size_category_select"
+)
+size_fields = SIZE_FIELD_SETS[size_category]
+measurements = {}
+_half = (len(size_fields) + 1) // 2
+size_cols = st.columns(2)
+with size_cols[0]:
+    for label in size_fields[:_half]:
+        measurements[label] = st.text_input(
+            f"{label}（cm）",
+            key=f"size_input_{size_category}_{label}",
+            placeholder="例: 45",
+        )
+with size_cols[1]:
+    for label in size_fields[_half:]:
+        measurements[label] = st.text_input(
+            f"{label}（cm）",
+            key=f"size_input_{size_category}_{label}",
+            placeholder="例: 45",
+        )
+st.caption("未入力のままでも生成できます（あとから反映することもできます）。")
+
 # 生成ボタン
 if st.button("✨ 商品紹介文を生成", type="primary", use_container_width=True):
     if not uploaded_files:
@@ -264,7 +338,10 @@ if st.button("✨ 商品紹介文を生成", type="primary", use_container_width
             image_parts = uploaded_files_to_parts(uploaded_files)
             client = genai.Client(api_key=api_key)
             result = generate_listing(client, image_parts)
-            data = enrich_with_full_description(parse_result(result))
+            data = parse_result(result)
+            if data and any(v.strip() for v in measurements.values()):
+                data["size_block"] = build_size_block(size_category, measurements)
+            data = enrich_with_full_description(data)
 
             if data:
                 with st.spinner("価格相場をリアルタイム調査中..."):
@@ -316,10 +393,55 @@ if st.session_state.current_listing:
         "📌 **直近の生成結果** — 新しい服で「生成」に成功すると内容は**差し替わり**ます。"
         " ダウンロードやコピー後も表示は残ります（「表示を消す」で消せます）。"
     )
+    if st.button(
+        "📐 上の採寸欄の内容を説明文に反映（生成後に採寸を直したとき用）",
+        key="apply_size_btn",
+    ):
+        new_block = build_size_block(size_category, measurements)
+        _updated = dict(st.session_state.current_listing)
+        _updated["size_block"] = new_block
+        _updated["description_full"] = build_listing_description(_updated)
+        st.session_state.current_listing = _updated
+        # まだ作られていないウィジェット(main_description_editor)の初期値を
+        # この場で書き換えているので、このrun内でそのまま反映される（st.rerun()不要）
+        st.session_state["main_description_editor"] = _updated["description_full"]
+        st.success("説明文の【サイズ】欄に反映しました。")
+
     v = st.session_state.get("listing_version", 0)
     render_listing_result(
         st.session_state.current_listing, key_prefix=f"persist_v{v}"
     )
+
+    st.divider()
+    if st.button(
+        "🚀 メルカリへ自動入力（新しいウィンドウで下書きを開く）",
+        key="mercari_autofill_btn",
+        type="primary",
+        use_container_width=True,
+    ):
+        if not uploaded_files:
+            st.error(
+                "写真が見つかりません。ページ上部で写真をアップロードした状態のまま操作してください。"
+            )
+        else:
+            fill_data = dict(st.session_state.current_listing)
+            fill_data["title"] = st.session_state.get(
+                "main_title_editor", fill_data.get("title", "")
+            )
+            fill_data["description_full"] = st.session_state.get(
+                "main_description_editor", fill_data.get("description_full", "")
+            )
+            with st.spinner("ブラウザでメルカリの出品フォームを開いています..."):
+                _launch_mercari_autofill(uploaded_files, fill_data)
+            st.success(
+                "自動入力を開始しました。数秒後に新しいブラウザウィンドウが開きます。"
+                "「出品する」ボタンは押されないので、内容を確認してから自分で押してください。"
+            )
+    st.caption(
+        "写真・商品名・商品説明・カテゴリー・商品の状態・価格まで自動入力します"
+        "（カテゴリー・状態・価格はベストエフォート。ブランド・サイズ等の任意項目と最終確認・出品は手動です）"
+    )
+
     if st.button("🗑️ この結果の表示を消す", key="clear_listing_display"):
         st.session_state.current_listing = None
         st.session_state.last_parse_failed_raw = None
