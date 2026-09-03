@@ -50,6 +50,28 @@ st.set_page_config(
     layout="wide",
 )
 
+# スマホ幅（iPhone等）で見出し・本文の文字が相対的に大きくなりすぎるのを抑える
+st.markdown(
+    """
+    <style>
+    @media (max-width: 600px) {
+        h1 { font-size: 1.5rem !important; }
+        h2 { font-size: 1.2rem !important; }
+        h3 { font-size: 1.05rem !important; }
+        [data-testid="stMarkdownContainer"] p,
+        [data-testid="stCaptionContainer"] { font-size: 0.9rem !important; }
+        .stButton button, .stDownloadButton button,
+        .stLinkButton a, .stLinkButton button {
+            font-size: 0.85rem !important;
+            padding: 0.35rem 0.6rem !important;
+        }
+        input, textarea { font-size: 0.9rem !important; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # アプリ内パスワードゲート（ブラウザのHTTP Basic認証はスマホ端末によって
 # ポップアップが出ないことがあるため、こちらを正としてアクセス制限する）。
 # ログイン状態はURLのクエリパラメータで持たせる
