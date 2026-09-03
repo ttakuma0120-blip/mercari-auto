@@ -22,6 +22,13 @@ from history_store import (
     load_history,
 )
 from listing_template import SIZE_FIELD_SETS, build_listing_description, build_size_block
+from mercari_autofill import (
+    _extract_leaf_category,
+    _extract_price_number,
+    map_color_to_mercari_categories,
+    map_condition_to_damage_flag,
+    map_condition_to_label,
+)
 from mercari_listing_generator import (
     enrich_with_full_description,
     generate_listing,
@@ -204,6 +211,102 @@ def render_listing_result(data: dict, key_prefix: str = "main") -> None:
             use_container_width=True,
         )
 
+    st.divider()
+    st.subheader("📋 メルカリへの貼り付けガイド（上から順にやればOK）")
+    st.caption(
+        "カテゴリーを選ぶと「ブランド」「サイズ」「カラー」「汚れ・破れ・臭いなど」が追加で表示されます"
+        "（サイズ・カラー・汚れ等は入力必須、ブランドは任意）。"
+    )
+    leaf_category = _extract_leaf_category(data.get("category_suggestion", ""))
+    condition_label = map_condition_to_label(data.get("condition", ""))
+    price_number = _extract_price_number(data.get("price_suggestion", ""))
+    color_categories = map_color_to_mercari_categories(data.get("color", ""))
+    damage_flag = map_condition_to_damage_flag(data.get("condition", ""))
+
+    guide_rows = [
+        {"#": 1, "メルカリの項目": "出品画像", "必須": "必須", "入力・選択する内容": "アップロードした写真をそのまま追加"},
+        {"#": 2, "メルカリの項目": "商品名", "必須": "必須", "入力・選択する内容": "上の「タイトルをコピー」→ 貼り付け"},
+        {
+            "#": 3,
+            "メルカリの項目": "カテゴリー",
+            "必須": "必須",
+            "入力・選択する内容": (
+                f"検索欄に「{leaf_category}」と入力 → 候補を選択"
+                if leaf_category
+                else "内容を見て手動で選択"
+            ),
+        },
+        {
+            "#": 4,
+            "メルカリの項目": "ブランド",
+            "必須": "任意",
+            "入力・選択する内容": (
+                f"「{data.get('brand', '')}」を検索して選択"
+                if data.get("brand", "").strip()
+                else "分からなければ「ブランドなし」のままでOK"
+            ),
+        },
+        {"#": 5, "メルカリの項目": "商品の状態", "必須": "必須", "入力・選択する内容": f"「{condition_label}」を選択"},
+        {"#": 6, "メルカリの項目": "サイズ", "必須": "必須", "入力・選択する内容": "商品タグの表記を見て選択（下の【サイズ】欄の実寸も参考）"},
+        {
+            "#": 7,
+            "メルカリの項目": "カラー",
+            "必須": "必須",
+            "入力・選択する内容": (
+                "「" + "」「".join(color_categories) + "」を選択（複数選択可）"
+                if color_categories
+                else "下の【カラー】欄を見て選択"
+            ),
+        },
+        {"#": 8, "メルカリの項目": "汚れ・破れ・臭いなど", "必須": "必須", "入力・選択する内容": f"「{damage_flag}」を選択（違えば商品の状態を見て変更）"},
+        {"#": 9, "メルカリの項目": "商品の説明", "必須": "任意", "入力・選択する内容": "上の「紹介文をコピー」→ 貼り付け"},
+        {"#": 10, "メルカリの項目": "配送料の負担", "必須": "必須", "入力・選択する内容": "初期値「送料込み(出品者負担)」のままでOK"},
+        {"#": 11, "メルカリの項目": "配送の方法", "必須": "必須", "入力・選択する内容": "初期値なし。いつも使う方法を選択（毎回同じでOK）"},
+        {"#": 12, "メルカリの項目": "発送元の地域", "必須": "必須", "入力・選択する内容": "初期値なし。自分の都道府県を選択（毎回同じ）"},
+        {"#": 13, "メルカリの項目": "発送までの日数", "必須": "必須", "入力・選択する内容": "初期値「2〜3日で発送」のままでOK"},
+        {
+            "#": 14,
+            "メルカリの項目": "価格",
+            "必須": "必須",
+            "入力・選択する内容": f"「{price_number:,}」と入力" if price_number else "上の価格設定（提案）を見て手動で入力",
+        },
+    ]
+    st.dataframe(
+        guide_rows,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "#": st.column_config.NumberColumn(width="small"),
+            "メルカリの項目": st.column_config.TextColumn(width="medium"),
+            "必須": st.column_config.TextColumn(width="small"),
+            "入力・選択する内容": st.column_config.TextColumn(width="large"),
+        },
+    )
+
+    gcol1, gcol2, gcol3 = st.columns(3)
+    with gcol1:
+        if leaf_category:
+            clipboard_copy_button(
+                f"「{leaf_category}」をコピー", leaf_category, f"{key_prefix}_cat_cp"
+            )
+    with gcol2:
+        if price_number:
+            clipboard_copy_button(
+                f"価格 {price_number} をコピー", str(price_number), f"{key_prefix}_price_cp"
+            )
+    with gcol3:
+        brand_value = (data.get("brand") or "").strip()
+        if brand_value:
+            clipboard_copy_button(
+                f"「{brand_value}」をコピー", brand_value, f"{key_prefix}_brand_cp"
+            )
+
+    st.link_button(
+        "🛒 メルカリの出品画面を開く",
+        "https://jp.mercari.com/sell/create",
+        use_container_width=True,
+    )
+
     with st.expander("写真から生成した差し替え部分のみ"):
         st.text(f"【ポイント】キーワード行\n{data.get('points_keywords', '')}")
         st.text(f"【ポイント】✅箇条書き\n{data.get('points_checkmarks', '')}")
@@ -261,10 +364,19 @@ with st.sidebar:
             clear_all_history()
             st.rerun()
 
-st.title("📦 メルカリ商品紹介文 自動生成")
-st.caption(
-    "写真をアップロードするだけで、タイトルと【ポイント】【カラー】【素材】【状態】【サイズ】を埋めた定型紹介文を生成します（Gemini のみ）"
-)
+title_col, link_col = st.columns([5, 2])
+with title_col:
+    st.title("📦 メルカリ商品紹介文 自動生成")
+    st.caption(
+        "写真をアップロードするだけで、タイトルと【ポイント】【カラー】【素材】【状態】【サイズ】を埋めた定型紹介文を生成します（Gemini のみ）"
+    )
+with link_col:
+    st.write("")
+    st.link_button(
+        "🛒 メルカリを開く",
+        "https://jp.mercari.com/sell/create",
+        use_container_width=True,
+    )
 
 # 画像アップロード（key に upload_widget_id を含め、クリア時にインクリメントして
 # ウィジェットを作り直す → ブラウザのファイルチップ／フォルダ選択もリセットされる）
@@ -294,6 +406,15 @@ if uploaded_files:
         with cols[i % 4]:
             st.image(f, caption=f.name, use_container_width=True)
         f.seek(0)  # 読み込み位置をリセット
+
+# ブランド名（分かる場合のみ。タグに表記がなければ空欄でOK）
+st.subheader("🏷️ ブランド名（分かれば入力・空欄でもOK）")
+brand_name = st.text_input(
+    "ブランド名",
+    key="brand_name_input",
+    label_visibility="collapsed",
+    placeholder="例: Champion（分からなければ空欄のままでOK）",
+)
 
 # 採寸入力（生成前に分かっている数値を入れておくと、そのまま説明文に使われる）
 st.subheader("📏 採寸（分かっていれば先に入力しておくと、そのまま説明文に使われます）")
@@ -341,6 +462,8 @@ if st.button("✨ 商品紹介文を生成", type="primary", use_container_width
             data = parse_result(result)
             if data and any(v.strip() for v in measurements.values()):
                 data["size_block"] = build_size_block(size_category, measurements)
+            if data:
+                data["brand"] = brand_name.strip()
             data = enrich_with_full_description(data)
 
             if data:

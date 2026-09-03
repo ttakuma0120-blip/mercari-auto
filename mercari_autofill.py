@@ -29,12 +29,27 @@ CONDITION_LABELS = [
 
 
 def launch_browser():
-    """常設ブラウザプロファイルでPlaywrightを起動する（ログイン状態を維持するため）"""
+    """
+    常設ブラウザプロファイルでPlaywrightを起動する（ログイン状態を維持するため）。
+    メルカリ側のBot検知でログイン画面が読み込まれなくなる事象を避けるため、
+    Chromium同梱版ではなく実際のGoogle Chromeを使い、navigator.webdriver等の
+    自動操作の痕跡を隠すinit scriptを注入する。
+    """
     playwright = sync_playwright().start()
     context = playwright.chromium.launch_persistent_context(
         user_data_dir=str(PROFILE_DIR),
+        channel="chrome",
         headless=False,
         viewport={"width": 1400, "height": 900},
+        args=["--disable-blink-features=AutomationControlled"],
+    )
+    context.add_init_script(
+        """
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        window.chrome = window.chrome || { runtime: {} };
+        Object.defineProperty(navigator, 'languages', { get: () => ['ja-JP', 'ja'] });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        """
     )
     return playwright, context
 
@@ -70,6 +85,50 @@ def map_condition_to_label(condition_text: str) -> str:
     if "傷" in t or "汚れ" in t:
         return "傷や汚れあり"
     return "目立った傷や汚れなし"
+
+
+_COLOR_KEYWORD_MAP = [
+    ("ブラック", "ブラック系"), ("黒", "ブラック系"),
+    ("ホワイト", "ホワイト系"), ("白", "ホワイト系"),
+    ("グレー", "グレイ系"), ("グレイ", "グレイ系"), ("灰", "グレイ系"),
+    ("ベージュ", "ベージュ系"),
+    ("ブラウン", "ブラウン系"), ("茶", "ブラウン系"),
+    ("レッド", "レッド系"), ("赤", "レッド系"),
+    ("ピンク", "ピンク系"),
+    ("パープル", "パープル系"), ("紫", "パープル系"),
+    ("ネイビー", "ネイビー系"), ("紺", "ネイビー系"),
+    ("ブルー", "ブルー系"), ("青", "ブルー系"),
+    ("グリーン", "グリーン系"), ("緑", "グリーン系"),
+    ("カーキ", "カーキ系"),
+    ("イエロー", "イエロー系"), ("黄", "イエロー系"),
+    ("オレンジ", "オレンジ系"),
+    ("ゴールド", "ゴールド系"), ("金", "ゴールド系"),
+    ("シルバー", "シルバー系"), ("銀", "シルバー系"),
+]
+
+
+def map_color_to_mercari_categories(color_text: str) -> list[str]:
+    """Geminiが生成した色名の文章から、メルカリの「カラー」選択肢（○○系）候補を推定する"""
+    t = color_text or ""
+    found = []
+    for keyword, category in _COLOR_KEYWORD_MAP:
+        if keyword in t and category not in found:
+            found.append(category)
+    return found
+
+
+def map_condition_to_damage_flag(condition_text: str) -> str:
+    """Geminiが生成した状態の説明文から、メルカリの「汚れ・破れ・臭いなど」（あり/なし）を推定する"""
+    t = condition_text or ""
+    if "新品" in t and "未使用" in t:
+        return "なし"
+    if "傷" in t or "汚れ" in t or "臭い" in t:
+        if "なし" in t or "ありません" in t:
+            return "なし"
+        return "あり"
+    if "使用感" in t or "悪い" in t:
+        return "あり"
+    return "なし"
 
 
 def _extract_leaf_category(category_suggestion: str) -> str:
