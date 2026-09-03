@@ -16,7 +16,7 @@ LISTING_BODY_TEMPLATE = """【ポイント】
 ・写真は実物に近い色味ですが光加減で多少異なります
 ・1〜2日以内に発送します
 
-【カラー】{color}
+{brand_block}【カラー】{color}
 【素材】{material}
 【状態】{condition}
 
@@ -61,10 +61,13 @@ def build_listing_description(data: dict) -> str:
         styling_block = f"{_STYLING_HEAD}{styling}"
     else:
         styling_block = ""
+    brand = (data.get("brand") or "").strip()
+    brand_block = f"【ブランド】{brand}\n" if brand else ""
     return LISTING_BODY_TEMPLATE.format(
         points_keywords=data.get("points_keywords", "").strip(),
         points_checkmarks=data.get("points_checkmarks", "").strip(),
         styling_block=styling_block,
+        brand_block=brand_block,
         color=data.get("color", "").strip(),
         material=data.get("material", "").strip(),
         condition=data.get("condition", "").strip(),
